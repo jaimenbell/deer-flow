@@ -12,12 +12,43 @@ from __future__ import annotations
 
 import logging
 
+import json
+
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
+
+_json_serializer = lambda obj: json.dumps(obj, ensure_ascii=False)
 
 logger = logging.getLogger(__name__)
 
 _engine: AsyncEngine | None = None
 _session_factory: async_sessionmaker[AsyncSession] | None = None
+
+
+async def _auto_create_postgres_db(url: str) -> None:
+    """Connect to the ``postgres`` maintenance DB and CREATE DATABASE.
+
+    The target database name is extracted from *url*.  The connection is
+    made to the default ``postgres`` database on the same server using
+    ``AUTOCOMMIT`` isolation (CREATE DATABASE cannot run inside a
+    transaction).
+    """
+    from sqlalchemy import text
+    from sqlalchemy.engine.url import make_url
+
+    parsed = make_url(url)
+    db_name = parsed.database
+    if not db_name:
+        raise ValueError("Cannot auto-create database: no database name in URL")
+
+    # Connect to the default 'postgres' database to issue CREATE DATABASE
+    maint_url = parsed.set(database="postgres")
+    maint_engine = create_async_engine(maint_url, isolation_level="AUTOCOMMIT")
+    try:
+        async with maint_engine.connect() as conn:
+            await conn.execute(text(f'CREATE DATABASE "{db_name}"'))
+        logger.info("Auto-created PostgreSQL database: %s", db_name)
+    finally:
+        await maint_engine.dispose()
 
 
 async def init_engine(
@@ -53,13 +84,14 @@ async def init_engine(
         import os
 
         os.makedirs(sqlite_dir or ".", exist_ok=True)
-        _engine = create_async_engine(url, echo=echo)
+        _engine = create_async_engine(url, echo=echo, json_serializer=_json_serializer)
     elif backend == "postgres":
         _engine = create_async_engine(
             url,
             echo=echo,
             pool_size=pool_size,
             pool_pre_ping=True,
+            json_serializer=_json_serializer,
         )
     else:
         raise ValueError(f"Unknown persistence backend: {backend!r}")
@@ -76,8 +108,21 @@ async def init_engine(
     except ImportError:
         pass
 
-    async with _engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+    try:
+        async with _engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+    except Exception as exc:
+        if backend == "postgres" and "does not exist" in str(exc):
+            # Database not yet created — attempt to auto-create it, then retry.
+            await _auto_create_postgres_db(url)
+            # Rebuild engine against the now-existing database
+            await _engine.dispose()
+            _engine = create_async_engine(url, echo=echo, pool_size=pool_size, pool_pre_ping=True, json_serializer=_json_serializer)
+            _session_factory = async_sessionmaker(_engine, expire_on_commit=False)
+            async with _engine.begin() as conn:
+                await conn.run_sync(Base.metadata.create_all)
+        else:
+            raise
 
     logger.info("Persistence engine initialized: backend=%s", backend)
 

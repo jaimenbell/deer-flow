@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import datetime
 
-from sqlalchemy import JSON, Index, String, Text
+from sqlalchemy import JSON, DateTime, Index, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from deerflow.persistence.base import Base
@@ -22,7 +22,7 @@ class RunEventRow(Base):
     content: Mapped[str] = mapped_column(Text, default="")
     event_metadata: Mapped[dict] = mapped_column(JSON, default=dict)
     seq: Mapped[int] = mapped_column(nullable=False)
-    created_at: Mapped[datetime] = mapped_column(default=lambda: datetime.now(UTC))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now())
 
     __table_args__ = (
         Index("ix_events_thread_cat_seq", "thread_id", "category", "seq"),

@@ -19,7 +19,7 @@ from fastapi import HTTPException, Request
 from langchain_core.messages import HumanMessage
 
 from app.gateway.deps import get_run_context, get_run_manager, get_run_store, get_stream_bridge
-from app.gateway.routers.threads import _sanitize_log_param
+from app.gateway.utils import sanitize_log_param
 from deerflow.runtime import (
     END_SENTINEL,
     HEARTBEAT_SENTINEL,
@@ -186,7 +186,7 @@ async def _upsert_thread_in_store(store, thread_id: str, metadata: dict | None) 
     try:
         await _store_upsert(store, thread_id, metadata=metadata)
     except Exception:
-        logger.warning("Failed to upsert thread %s in store (non-fatal)", _sanitize_log_param(thread_id))
+        logger.warning("Failed to upsert thread %s in store (non-fatal)", sanitize_log_param(thread_id))
 
 
 async def _sync_thread_title_after_run(
@@ -309,7 +309,7 @@ async def start_run(
             else:
                 await run_ctx.thread_meta_repo.update_status(thread_id, "running")
         except Exception:
-            logger.warning("Failed to upsert thread_meta for %s (non-fatal)", _sanitize_log_param(thread_id))
+            logger.warning("Failed to upsert thread_meta for %s (non-fatal)", sanitize_log_param(thread_id))
 
     agent_factory = resolve_agent_factory(body.assistant_id)
     graph_input = normalize_input(body.input)

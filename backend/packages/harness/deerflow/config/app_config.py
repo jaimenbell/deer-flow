@@ -222,26 +222,34 @@ class AppConfig(BaseModel):
         """
         return next((group for group in self.tool_groups if group.name == name), None)
 
-    # -- Lifecycle (class-level singleton via ContextVar) --
+    # -- Lifecycle (process-global + per-context override) --
 
-    _current: ClassVar[ContextVar[AppConfig]] = ContextVar("deerflow_app_config")
+    _global: ClassVar[AppConfig | None] = None
+    _override: ClassVar[ContextVar[AppConfig]] = ContextVar("deerflow_app_config_override")
 
     @classmethod
     def init(cls, config: AppConfig) -> None:
-        """Set the AppConfig for the current context. Call once at process startup."""
-        cls._current.set(config)
+        """Set the process-global AppConfig. Visible to all subsequent requests."""
+        cls._global = config
+
+    @classmethod
+    def set_override(cls, config: AppConfig) -> None:
+        """Set a per-context override (e.g., for a single invocation with custom config)."""
+        cls._override.set(config)
 
     @classmethod
     def current(cls) -> AppConfig:
         """Get the current AppConfig.
 
-        Auto-initializes from config file on first access for backward compatibility.
-        Prefer calling AppConfig.init() explicitly at process startup.
+        Priority: per-context override > process-global > auto-load from file.
         """
         try:
-            return cls._current.get()
+            return cls._override.get()
         except LookupError:
-            logger.debug("AppConfig not initialized, auto-loading from file")
-            config = cls.from_file()
-            cls._current.set(config)
-            return config
+            pass
+        if cls._global is not None:
+            return cls._global
+        logger.debug("AppConfig not initialized, auto-loading from file")
+        config = cls.from_file()
+        cls._global = config
+        return config

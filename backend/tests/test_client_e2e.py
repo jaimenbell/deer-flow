@@ -102,6 +102,11 @@ def e2e_env(tmp_path, monkeypatch):
     monkeypatch.setattr("deerflow.config.paths._paths", None)
     monkeypatch.setattr("deerflow.sandbox.sandbox_provider._default_sandbox_provider", None)
 
+    # 1b. Override the autouse ``AppConfig.from_file`` stub from conftest
+    #     (minimal test config) with the e2e-specific config that carries a
+    #     real model entry and disables title/memory/summarization.
+    monkeypatch.setattr(AppConfig, "from_file", staticmethod(lambda config_path=None: _make_e2e_config()))
+
     # 2. Exclude TitleMiddleware from the chain.
     #    It triggers an extra LLM call to generate a thread title, which adds
     #    non-determinism and cost to E2E tests (title generation is already

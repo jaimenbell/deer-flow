@@ -30,11 +30,15 @@ load_dotenv()
 logger = logging.getLogger(__name__)
 
 
+# Precompute at module import time (main thread) to avoid os.getcwd() in async context.
+_BACKEND_DIR = Path(__file__).resolve().parents[4]
+_REPO_ROOT = _BACKEND_DIR.parent
+_DEFAULT_CONFIG_CANDIDATES: tuple[Path, ...] = (_BACKEND_DIR / "config.yaml", _REPO_ROOT / "config.yaml")
+
+
 def _default_config_candidates() -> tuple[Path, ...]:
     """Return deterministic config.yaml locations without relying on cwd."""
-    backend_dir = Path(__file__).resolve().parents[4]
-    repo_root = backend_dir.parent
-    return (backend_dir / "config.yaml", repo_root / "config.yaml")
+    return _DEFAULT_CONFIG_CANDIDATES
 
 
 class AppConfig(BaseModel):

@@ -274,7 +274,7 @@ fi
 
 # 2. Gateway API
 run_service "Gateway" \
-    "cd backend && PYTHONPATH=. uv run uvicorn app.gateway.app:app --host 0.0.0.0 --port 8001 $GATEWAY_EXTRA_FLAGS > ../logs/gateway.log 2>&1" \
+    "cd backend && PYTHONPATH=. uv run uvicorn app.gateway.app:app --host 127.0.0.1 --port 8001 $GATEWAY_EXTRA_FLAGS > ../logs/gateway.log 2>&1" \
     8001 30
 
 # 3. Frontend

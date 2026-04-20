@@ -96,15 +96,19 @@ def read_kronos_predictions(signals_dir: Path = SIGNALS_DIR) -> dict[str, dict]:
         return {}
     # Support both dict-of-tickers and list-of-predictions formats
     if isinstance(data, dict) and "predictions" in data:
-        entries = data["predictions"]
+        preds = data["predictions"]
+        if isinstance(preds, dict):
+            # {ticker: {...}} mapping nested under "predictions" key
+            return {k.upper(): v for k, v in preds.items()}
+        elif isinstance(preds, list):
+            return {e["ticker"].upper(): e for e in preds if "ticker" in e}
+        return {}
     elif isinstance(data, list):
-        entries = data
+        return {e["ticker"].upper(): e for e in data if "ticker" in e}
     elif isinstance(data, dict):
         # Direct {ticker: {...}} mapping
         return {k.upper(): v for k, v in data.items()}
-    else:
-        return {}
-    return {e["ticker"].upper(): e for e in entries if "ticker" in e}
+    return {}
 
 
 def read_options_positions(signals_dir: Path = SIGNALS_DIR) -> set[str]:

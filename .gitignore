@@ -28,6 +28,10 @@ config.yaml
 mcp_config.json
 extensions_config.json
 
+# Debug logs (may contain secrets - never commit)
+deerflow_mcp_debug.log
+*.debug.log
+
 # IDE
 .idea/
 .vscode/

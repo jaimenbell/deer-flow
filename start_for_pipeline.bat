@@ -24,14 +24,13 @@ if not exist "%ENV_FILE%" (
     exit /b 1
 )
 
-for /f "usebackq tokens=1,* delims==" %%A in ("%ENV_FILE%") do (
-    set "_key=%%A"
-    if not "!_key!"=="" (
-        if not "!_key:~0,1!"=="#" (
-            set "%%A=%%B"
-        )
-    )
+set "_env_tmp=%TEMP%\deer_env_%RANDOM%.cmd"
+powershell -NoProfile -Command "$q=[char]34; Get-Content '%ENV_FILE%' | Where-Object { $_ -match '^[A-Za-z_][A-Za-z0-9_]*=' } | ForEach-Object { '@set ' + $q + $_ + $q } | Set-Content '%_env_tmp%' -Encoding ASCII"
+if exist "%_env_tmp%" (
+    call "%_env_tmp%"
+    del /q "%_env_tmp%"
 )
+set "_env_tmp="
 
 :: -- Check ANTHROPIC_API_KEY ------------------------------------------------
 if "!ANTHROPIC_API_KEY!"=="" (

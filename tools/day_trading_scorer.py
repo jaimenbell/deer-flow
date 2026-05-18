@@ -63,6 +63,13 @@ RISK_RULES: dict[str, Any] = {
 ENTRY_THRESHOLD = 85
 STRONG_ENTRY_THRESHOLD = 100
 
+# News catalyst conviction deltas (E1 — news-bot integration v2)
+NEWS_CATALYST_STRONG_BONUS = 20
+NEWS_CATALYST_WEAK_BONUS = 10
+NEWS_CATALYST_BEARISH_PENALTY = 15
+NEWS_CATALYST_STRONG_FLOOR = 70
+NEWS_CATALYST_WEAK_FLOOR = 50
+
 
 # ---------------------------------------------------------------------------
 # Signal bus readers
@@ -141,6 +148,18 @@ def read_market_regime(signals_dir: Path = SIGNALS_DIR) -> dict[str, Any]:
     return data
 
 
+def read_news_catalyst(signals_dir: Path = SIGNALS_DIR) -> dict[str, dict]:
+    """Return {ticker: catalyst_dict} from news_catalyst.json. Fail-open if missing."""
+    data = _load_json(signals_dir / "news_catalyst.json")
+    if not data:
+        return {}
+    return {
+        str(s["ticker"]).upper(): s
+        for s in data.get("signals", [])
+        if isinstance(s, dict) and s.get("ticker")
+    }
+
+
 # ---------------------------------------------------------------------------
 # Conviction scorer
 # ---------------------------------------------------------------------------
@@ -152,6 +171,7 @@ def score_ticker(
     sentiment: str | None,
     market_regime: dict,
     already_held: bool,
+    news_catalyst: dict | None = None,
 ) -> tuple[float, list[str]]:
     """
     Compute conviction score for a single ticker.
@@ -180,6 +200,20 @@ def score_ticker(
     if sentiment == "positive":
         score += 10
         reasons.append("mirofish_positive")
+
+    # News catalyst (E1) — bullish boost or bearish penalty from news-bot.
+    if news_catalyst:
+        cat_score = int(news_catalyst.get("catalyst_score", 0) or 0)
+        cat_label = str(news_catalyst.get("sentiment_label", "")).lower()
+        if cat_label == "bullish" and cat_score >= NEWS_CATALYST_STRONG_FLOOR:
+            score += NEWS_CATALYST_STRONG_BONUS
+            reasons.append(f"news_catalyst_strong_{cat_score}")
+        elif cat_label == "bullish" and cat_score >= NEWS_CATALYST_WEAK_FLOOR:
+            score += NEWS_CATALYST_WEAK_BONUS
+            reasons.append(f"news_catalyst_weak_{cat_score}")
+        elif cat_label == "bearish":
+            score -= NEWS_CATALYST_BEARISH_PENALTY
+            reasons.append(f"news_catalyst_bearish_{cat_score}")
 
     news_regime: str = str(market_regime.get("news_regime", "")).lower()
     fear_and_greed: int | None = market_regime.get("fear_and_greed")
@@ -252,6 +286,7 @@ def run_scoring(signals_dir: Path = SIGNALS_DIR) -> dict[str, Any]:
     held_tickers = read_options_positions(signals_dir)
     mirofish = read_mirofish_sentiment(signals_dir)
     market_regime = read_market_regime(signals_dir)
+    news_catalyst_map = read_news_catalyst(signals_dir)
 
     # Candidate universe = union of kronos (primary) and whale tickers
     candidates = set(kronos_map.keys()) | set(whale_map.keys())
@@ -284,6 +319,7 @@ def run_scoring(signals_dir: Path = SIGNALS_DIR) -> dict[str, Any]:
             sentiment=sentiment,
             market_regime=market_regime,
             already_held=already_held,
+            news_catalyst=news_catalyst_map.get(ticker),
         )
 
         scored.append(

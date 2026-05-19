@@ -78,6 +78,11 @@ RANKED_TICKER_TOP_N = 5        # positions 0-4 get the higher bonus
 RANKED_TICKER_TOP_BONUS = 2
 RANKED_TICKER_BONUS = 1
 
+# Options sweep bonus/penalty (R1 wire — options-bot chain_voi_score signals)
+OPTIONS_SWEEP_STALE_HOURS = 4
+OPTIONS_SWEEP_CALL_BONUS = 15
+OPTIONS_SWEEP_PUT_PENALTY = 15
+
 
 # ---------------------------------------------------------------------------
 # Signal bus readers
@@ -211,6 +216,31 @@ def read_ranked_tickers(signals_dir: Path = SIGNALS_DIR) -> dict[str, int]:
     }
 
 
+def read_options_signals(signals_dir: Path = SIGNALS_DIR) -> dict[str, dict]:
+    """Return {ticker: {sweep_type, score, computed_at}} from options_signals.json.
+
+    Returns empty dict if file is missing, stale (>4 h), or corrupt.
+    """
+    path = signals_dir / "options_signals.json"
+    if not path.exists():
+        return {}
+    age_hours = (time.time() - path.stat().st_mtime) / 3600
+    if age_hours > OPTIONS_SWEEP_STALE_HOURS:
+        logging.warning(
+            "options_signals.json is %.1fh old (>%dh threshold) — skipping sweep bonus",
+            age_hours, OPTIONS_SWEEP_STALE_HOURS,
+        )
+        return {}
+    data = _load_json(path)
+    if not data:
+        return {}
+    return {
+        entry["ticker"].upper(): entry
+        for entry in data.get("tickers", [])
+        if isinstance(entry, dict) and entry.get("ticker")
+    }
+
+
 # ---------------------------------------------------------------------------
 # Conviction scorer
 # ---------------------------------------------------------------------------
@@ -224,6 +254,7 @@ def score_ticker(
     already_held: bool,
     news_catalyst: dict | None = None,
     ranked_ticker_rank: int | None = None,
+    options_sweep: dict | None = None,
 ) -> tuple[float, list[str]]:
     """
     Compute conviction score for a single ticker.
@@ -271,6 +302,15 @@ def score_ticker(
         bonus = RANKED_TICKER_TOP_BONUS if ranked_ticker_rank < RANKED_TICKER_TOP_N else RANKED_TICKER_BONUS
         score += bonus
         reasons.append(f"ranked_ticker_pos{ranked_ticker_rank}_bonus{bonus}")
+
+    if options_sweep:
+        sweep_type = str(options_sweep.get("sweep_type", "")).lower()
+        if sweep_type == "call":
+            score += OPTIONS_SWEEP_CALL_BONUS
+            reasons.append(f"options_sweep_call_bonus_{OPTIONS_SWEEP_CALL_BONUS}")
+        elif sweep_type == "put":
+            score -= OPTIONS_SWEEP_PUT_PENALTY
+            reasons.append(f"options_sweep_put_penalty_{OPTIONS_SWEEP_PUT_PENALTY}")
 
     news_regime: str = str(market_regime.get("news_regime", "")).lower()
     fear_and_greed: int | None = market_regime.get("fear_and_greed")
@@ -345,6 +385,7 @@ def run_scoring(signals_dir: Path = SIGNALS_DIR) -> dict[str, Any]:
     market_regime = read_market_regime(signals_dir)
     news_catalyst_map = read_news_catalyst(signals_dir)
     ranked_map = read_ranked_tickers(signals_dir)
+    options_signals_map = read_options_signals(signals_dir)
 
     # Candidate universe = union of kronos (primary), whale, and overnight ranked tickers
     candidates = set(kronos_map.keys()) | set(whale_map.keys()) | set(ranked_map.keys())
@@ -379,6 +420,7 @@ def run_scoring(signals_dir: Path = SIGNALS_DIR) -> dict[str, Any]:
             already_held=already_held,
             news_catalyst=news_catalyst_map.get(ticker),
             ranked_ticker_rank=ranked_map.get(ticker),
+            options_sweep=options_signals_map.get(ticker),
         )
 
         scored.append(

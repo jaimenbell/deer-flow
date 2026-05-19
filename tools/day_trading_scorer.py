@@ -10,7 +10,8 @@ a DeerFlow agent, or called directly from run_scorer.py.
 Signal bus files expected:
   whale_signals.json         — whale tracker output
   kronos_predictions.json    — Kronos ML forecasts
-  options_positions.json     — currently held positions
+  options_positions.json     — currently held wheel/options positions
+  day_trader_positions.json  — currently held day-trader intraday positions
   mirofish_sentiment.json    — optional sentiment overlay
   market_regime.json         — optional news/macro regime + Fear & Greed
 """
@@ -76,11 +77,15 @@ NEWS_CATALYST_WEAK_FLOOR = 50
 # ---------------------------------------------------------------------------
 
 def _load_json(path: Path) -> Any:
-    """Load JSON file; return None if file is missing."""
+    """Load JSON file; return None if file is missing or corrupt."""
     if not path.exists():
         return None
-    with path.open(encoding="utf-8") as f:
-        return json.load(f)
+    try:
+        with path.open(encoding="utf-8") as f:
+            return json.load(f)
+    except (json.JSONDecodeError, OSError) as exc:
+        logging.warning("Corrupt or unreadable signal file %s — %s", path.name, exc)
+        return None
 
 
 def read_whale_signals(signals_dir: Path = SIGNALS_DIR) -> dict[str, dict]:
@@ -119,12 +124,25 @@ def read_kronos_predictions(signals_dir: Path = SIGNALS_DIR) -> dict[str, dict]:
 
 
 def read_options_positions(signals_dir: Path = SIGNALS_DIR) -> set[str]:
-    """Return set of tickers currently held in options positions."""
+    """Return set of tickers currently held in options wheel positions."""
     data = _load_json(signals_dir / "options_positions.json")
     if not data:
         return set()
     positions = data if isinstance(data, list) else data.get("positions", [])
     return {p["ticker"].upper() for p in positions if "ticker" in p}
+
+
+def read_daytrader_positions(signals_dir: Path = SIGNALS_DIR) -> set[str]:
+    """Return set of tickers with open day-trader intraday positions."""
+    data = _load_json(signals_dir / "day_trader_positions.json")
+    if not data:
+        return set()
+    positions = data if isinstance(data, list) else data.get("positions", [])
+    return {
+        p["ticker"].upper()
+        for p in positions
+        if "ticker" in p and p.get("status") == "open"
+    }
 
 
 def read_mirofish_sentiment(signals_dir: Path = SIGNALS_DIR) -> dict[str, str]:
@@ -283,7 +301,7 @@ def run_scoring(signals_dir: Path = SIGNALS_DIR) -> dict[str, Any]:
     """
     whale_map = read_whale_signals(signals_dir)
     kronos_map = read_kronos_predictions(signals_dir)
-    held_tickers = read_options_positions(signals_dir)
+    held_tickers = read_options_positions(signals_dir) | read_daytrader_positions(signals_dir)
     mirofish = read_mirofish_sentiment(signals_dir)
     market_regime = read_market_regime(signals_dir)
     news_catalyst_map = read_news_catalyst(signals_dir)

@@ -83,6 +83,9 @@ OPTIONS_SWEEP_STALE_HOURS = 4
 OPTIONS_SWEEP_CALL_BONUS = 15
 OPTIONS_SWEEP_PUT_PENALTY = 15
 
+# news_veto pre-filter (Wire #8)
+NEWS_VETO_STALE_HOURS = 2
+
 
 # ---------------------------------------------------------------------------
 # Signal bus readers
@@ -213,6 +216,33 @@ def read_ranked_tickers(signals_dir: Path = SIGNALS_DIR) -> dict[str, int]:
         entry["ticker"].upper(): idx
         for idx, entry in enumerate(data.get("tickers", []))
         if isinstance(entry, dict) and entry.get("ticker")
+    }
+
+
+def read_news_veto(signals_dir: Path = SIGNALS_DIR) -> set[str]:
+    """Return set of vetoed tickers from news_veto.json (ticker-specific entries only).
+
+    Fail-open: returns empty set if file is missing, stale (>2 h), or corrupt.
+    Category-level vetoes in the file are intentionally ignored by the pre-filter.
+    """
+    path = signals_dir / "news_veto.json"
+    if not path.exists():
+        logging.warning("news_veto.json not found — no pre-filter applied")
+        return set()
+    age_hours = (time.time() - path.stat().st_mtime) / 3600
+    if age_hours > NEWS_VETO_STALE_HOURS:
+        logging.warning(
+            "news_veto.json is %.1fh old (>%dh threshold) — no pre-filter applied",
+            age_hours, NEWS_VETO_STALE_HOURS,
+        )
+        return set()
+    data = _load_json(path)
+    if not data:
+        return set()
+    return {
+        str(v["ticker"]).upper()
+        for v in data.get("vetoes", [])
+        if isinstance(v, dict) and v.get("ticker")
     }
 
 
@@ -386,9 +416,17 @@ def run_scoring(signals_dir: Path = SIGNALS_DIR) -> dict[str, Any]:
     news_catalyst_map = read_news_catalyst(signals_dir)
     ranked_map = read_ranked_tickers(signals_dir)
     options_signals_map = read_options_signals(signals_dir)
+    vetoed_tickers = read_news_veto(signals_dir)
 
     # Candidate universe = union of kronos (primary), whale, and overnight ranked tickers
     candidates = set(kronos_map.keys()) | set(whale_map.keys()) | set(ranked_map.keys())
+
+    # news_veto pre-filter — drop vetoed tickers before any scoring
+    if vetoed_tickers:
+        dropped = candidates & vetoed_tickers
+        if dropped:
+            logging.info("news_veto pre-filter dropped: %s", sorted(dropped))
+        candidates -= vetoed_tickers
 
     scored: list[dict] = []
     for ticker in sorted(candidates):
